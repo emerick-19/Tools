@@ -29,7 +29,7 @@ def sigint_handler(signum, frame):
 
 signal.signal(signal.SIGINT, sigint_handler)
 
-# --- FONCTIONS DE SCAN CORE ---
+
 
 def fuzz_directory(word, target, config):
     global shutdown_flag
@@ -37,9 +37,9 @@ def fuzz_directory(word, target, config):
     
     word_base = word.strip().lstrip('/')
     
-    # On crée la liste des variantes à tester (le mot brut + les extensions)
+    
     urls_to_test = [f"{target}/{word_base}"]
-    if config['extensions'] and '.' not in word_base: # Évite de rajouter .html si le mot est déjà index.php
+    if config['extensions'] and '.' not in word_base: 
         for ext in config['extensions']:
             urls_to_test.append(f"{target}/{word_base}.{ext.strip().lstrip('.')}")
 
@@ -55,7 +55,7 @@ def fuzz_directory(word, target, config):
             
             if res.status_code in [200, 204, 301, 302, 307, 403]:
                 color = C_GREEN if res.status_code == 200 else C_YELLOW
-                # Extrait juste la fin de l'URL pour l'affichage propre
+                
                 display_path = url.replace(target, "")
                 print(f"{color}[{res.status_code}]{C_END} {C_CYAN}{display_path}{C_END}")
         except requests.RequestException: pass
@@ -102,10 +102,10 @@ def fuzz_headers(word, target, config):
             print(f"{C_GREEN}[Header]{C_END} X-Forwarded-For: {C_CYAN}{word.strip()}{C_END} -> Taille: {C_BLUE}{length} bytes{C_END}")
     except requests.RequestException: pass
 
-# --- LOGIQUE PRINCIPALE ---
+
 
 def main():
-    # Bannière corrigée, propre et lisible pour OMNIBUSTER
+    
     banner = r"""
 {C_MAGENTA}{C_BOLD} ______ __  __ _   _ _____ ____  _    _  _____ _______ ______ _____  
 |  ____|  \/  | \ | |_   _|  _ \| |  | |/ ____|__   __|  ____|  __ \ 
@@ -113,6 +113,7 @@ def main():
 |  __| | |\/| | . ` | | | |  _ <| |  | |\___ \   | |  |  __| |  _  / 
 | |____| |  | | |\  |_| |_| |_) | |__| |____) |  | |  | |____| | \ \ 
 |______|_|  |_|_| \_|_____|____/ \____/|_____/   |_|  |______|_|  \_\ 
+
                                          {C_CYAN}v3.2 - Stable By Emerick-19{C_END}
     """
     print(banner.format(C_MAGENTA=C_MAGENTA, C_BOLD=C_BOLD, C_CYAN=C_CYAN, C_END=C_END))
@@ -143,7 +144,7 @@ def main():
         
     scan_function = modes[choix]
 
-    # Traitement des extensions passées en argument (ex: "html,txt" -> ["html", "txt"])
+    
     extensions_list = []
     if args.extensions:
         extensions_list = [e.strip() for e in args.extensions.split(",")]
