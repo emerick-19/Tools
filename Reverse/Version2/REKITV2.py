@@ -634,4 +634,27 @@ for func in fm.getFunctions(True):
     out = run_cmd(cmd, timeout=300)
     if out:
         # Extraire le pseudo-C
-        print
+                if output_file is None:
+            output_file = path + ".decompiled.c"
+
+        lines = out.splitlines()
+        c_lines = []
+        capture = False
+        for line in lines:
+            if line.startswith("=== ") and line.endswith(" ==="):
+                capture = True
+                c_lines.append("\n/* " + line + " */")
+            elif capture and not line.startswith(("INFO ", "WARN ", "ERROR ", "Using ")):
+                c_lines.append(line)
+
+        pseudo_c = "\n".join(c_lines)
+        with open(output_file, "w") as f:
+            f.write(pseudo_c)
+
+        print(f"{C.G}✓ Décompilation terminée : {output_file}{C.END}")
+        print(f"{C.Y}Extrait :{C.END}")
+        for line in c_lines[:40]:
+            print(f"  {C.C}{line}{C.END}")
+          
+if __name__ == "__main__":
+    main()
