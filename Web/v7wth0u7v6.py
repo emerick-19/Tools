@@ -1387,9 +1387,7 @@ async def run_scan(args):
         await run_single_mode(client, config, reporter, args)
 
     reporter.summary()
-
 def main():
-    signal.signal(signal.SIGINT, sigint_handler)
     print(BANNER)
     parser = build_parser()
     args = parser.parse_args()
@@ -1401,8 +1399,16 @@ def main():
     try:
         asyncio.run(run_scan(args))
     except KeyboardInterrupt:
-        print(f"\n{C_RED}[!] Interrompu{C_END}")
-        sys.exit(0)
+        print(f"\n{C_RED}[!] Ctrl+C détecté — arrêt en cours…{C_END}")
+        try:
+            # 2e Ctrl+C = kill immédiat
+            time.sleep(2)
+        except KeyboardInterrupt:
+            print(f"\n{C_RED}[!] Arrêt forcé.{C_END}")
+            import os as _os
+            _os._exit(130)
+        print(f"{C_GREEN}[+] Scan interrompu proprement.{C_END}")
+        sys.exit(130)
 
 if __name__ == "__main__":
     main()
