@@ -1,14 +1,29 @@
 #!/usr/bin/env python3
 """
-REKit v2.0 - Reverse Engineering Toolkit
+REKit v2.1 - Reverse Engineering Toolkit
 Outil d'analyse statique et dynamique pour CTF et cybersécurité.
 
-Nouveautés v2.0 :
-  [10] Constantes 32-bit intéressantes
-  [11] Détection automatique d'algorithmes (FNV, RC4, MD5, SHA, AES...)
-  [12] Désassemblage Capstone (propre, multi-arch)
-  [13] Analyse radare2 (fonctions, CFG, xrefs)
-  [14] Décompilation Ghidra headless (optionnel)
+Modules :
+  [1]  Infos fichier (hashes, entropie, type)
+  [2]  Strings (ASCII/UTF-16, flags, URLs, IPs)
+  [3]  Analyse ELF (arch, sections, symboles)
+  [4]  Protections (PIE, NX, RELRO, Canary, Fortify)
+  [5]  Désassemblage objdump (fallback)
+  [6]  IOCs (emails, IPs, URLs, registry, chemins)
+  [7]  Recherche regex custom
+  [8]  Recherche d'offsets
+  [9]  Hexdump ciblé
+  [10] Constantes 32-bit (FNV, CRC, MD5, SHA, magic)
+  [11] Détection d'algorithmes
+  [12] Désassemblage Capstone
+  [13] Analyse radare2
+  [14] Décompilation Ghidra (optionnel)
+  [15] Détection de packer (UPX, MPRESS, Themida...)
+  [16] Unpacking automatique
+  [17] Analyse de patch (sauts conditionnels)
+  [18] Application de patch
+  [19] NOP-out
+  [20] Inversion de saut
 """
 
 import argparse
@@ -23,20 +38,26 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-# ---------- Couleurs ----------
+
+# ============================================================
+# COULEURS
+# ============================================================
 class C:
     R = "\033[91m"; G = "\033[92m"; Y = "\033[93m"
     B = "\033[94m"; M = "\033[95m"; C = "\033[96m"
     W = "\033[97m"; BOLD = "\033[1m"; END = "\033[0m"
 
-# ---------- Détection des dépendances optionnelles ----------
+
+# ============================================================
+# DÉTECTION DES DÉPENDANCES OPTIONNELLES
+# ============================================================
 HAS_CAPSTONE = False
 HAS_R2PIPE   = False
 HAS_ELFTOOLS = False
 HAS_GHIDRA   = False
 
 try:
-    from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_MODE_32, CS_ARCH_ARM, CS_ARCH_ARM64, CS_ARCH_MIPS
+    from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_MODE_32
     HAS_CAPSTONE = True
 except ImportError:
     pass
@@ -53,10 +74,13 @@ try:
 except ImportError:
     pass
 
-# Ghidra : on vérifie juste la présence du binaire
 if shutil.which("analyzeHeadless"):
     HAS_GHIDRA = True
 
+
+# ============================================================
+# BANNIÈRE
+# ============================================================
 def banner():
     print(f"""{C.C}{C.BOLD}
     ██████╗ ███████╗██╗  ██╗██╗████████╗
@@ -65,9 +89,8 @@ def banner():
     ██╔══██╗██╔══╝  ██╔═██╗ ██║   ██║   
     ██║  ██║███████╗██║  ██╗██║   ██║   
     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝   ╚═╝   
-       Reverse Engineering Toolkit v2.0
+       Reverse Engineering Toolkit v2.1
 {C.END}""")
-    # Afficher les modules disponibles
     mods = []
     if HAS_CAPSTONE: mods.append(f"{C.G}Capstone{C.END}")
     if HAS_R2PIPE:   mods.append(f"{C.G}radare2{C.END}")
@@ -76,7 +99,10 @@ def banner():
     if mods:
         print(f"{C.W}Modules actifs : {' | '.join(mods)}{C.END}\n")
 
-# ---------- Utilitaires ----------
+
+# ============================================================
+# UTILITAIRES
+# ============================================================
 def run_cmd(cmd, timeout=60):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -84,12 +110,14 @@ def run_cmd(cmd, timeout=60):
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
+
 def read_bytes(path):
     with open(path, "rb") as f:
         return f.read()
 
+
 # ============================================================
-# MODULE 1 - Informations fichier
+# MODULE 1 - INFORMATIONS FICHIER
 # ============================================================
 def file_info(path):
     print(f"\n{C.BOLD}{C.B}═══ [1] INFORMATIONS FICHIER ═══{C.END}")
@@ -111,6 +139,7 @@ def file_info(path):
     print(f"{C.Y}Entropie    :{C.END} {color}{ent:.4f}/8.0{C.END} ({status})")
     return data
 
+
 def detect_type(magic):
     sigs = {
         b"\x7fELF": "ELF (Linux/Unix)", b"MZ": "PE (Windows)",
@@ -122,17 +151,21 @@ def detect_type(magic):
         b"\x00asm": "WebAssembly", b"SQLite": "SQLite DB",
     }
     for sig, name in sigs.items():
-        if magic.startswith(sig): return name
+        if magic.startswith(sig):
+            return name
     return "Inconnu / brut"
 
+
 def entropy(data):
-    if not data: return 0.0
+    if not data:
+        return 0.0
     counts = Counter(data)
     n = len(data)
     return -sum((c/n) * math.log2(c/n) for c in counts.values())
 
+
 # ============================================================
-# MODULE 2 - Strings
+# MODULE 2 - STRINGS
 # ============================================================
 def extract_strings(data, min_len=4):
     print(f"\n{C.BOLD}{C.B}═══ [2] CHAÎNES INTÉRESSANTES ═══{C.END}")
@@ -156,7 +189,8 @@ def extract_strings(data, min_len=4):
         if any(k in low for k in keywords):
             print(f"  {C.R}→{C.END} {s[:120]}")
             found = True
-    if not found: print(f"  {C.W}(aucune){C.END}")
+    if not found:
+        print(f"  {C.W}(aucune){C.END}")
 
     print(f"\n{C.M}▶ Patterns type flag :{C.END}")
     flag_re = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}]{3,120}\}")
@@ -165,7 +199,8 @@ def extract_strings(data, min_len=4):
         for m in flag_re.finditer(s):
             print(f"  {C.G}{m.group()}{C.END}")
             any_flag = True
-    if not any_flag: print(f"  {C.W}(aucun){C.END}")
+    if not any_flag:
+        print(f"  {C.W}(aucun){C.END}")
 
     print(f"\n{C.M}▶ URLs / IPs :{C.END}")
     url_re = re.compile(r"https?://[^\s\"'<>]{4,}")
@@ -174,13 +209,16 @@ def extract_strings(data, min_len=4):
     for s in ascii_strs:
         urls.update(url_re.findall(s))
         ips.update(ip_re.findall(s))
-    for u in list(urls)[:20]: print(f"  {C.C}{u}{C.END}")
-    for i in list(ips)[:20]: print(f"  {C.C}{i}{C.END}")
+    for u in list(urls)[:20]:
+        print(f"  {C.C}{u}{C.END}")
+    for i in list(ips)[:20]:
+        print(f"  {C.C}{i}{C.END}")
 
     return ascii_strs, wide_strs
 
+
 # ============================================================
-# MODULE 3 - ELF
+# MODULE 3 - ANALYSE ELF
 # ============================================================
 def analyze_elf(data, path):
     print(f"\n{C.BOLD}{C.B}═══ [3] ANALYSE ELF ═══{C.END}")
@@ -188,16 +226,16 @@ def analyze_elf(data, path):
         print(f"{C.W}Pas un fichier ELF.{C.END}")
         return
 
-    ei_class = data[4]; ei_data = data[5]
-    arch = "64-bit" if ei_class == 2 else "32-bit"
+    ei_class = data[4]
+    ei_data  = data[5]
+    arch   = "64-bit" if ei_class == 2 else "32-bit"
     endian = "little" if ei_data == 1 else "big"
     print(f"{C.Y}Architecture :{C.END} {arch} {endian}")
 
     e_type = struct.unpack_from("<H", data, 16)[0] if ei_data == 1 else struct.unpack_from(">H", data, 16)[0]
-    types = {0:"NONE",1:"REL",2:"EXEC",3:"DYN (PIE/Shared)",4:"CORE"}
+    types = {0:"NONE", 1:"REL", 2:"EXEC", 3:"DYN (PIE/Shared)", 4:"CORE"}
     print(f"{C.Y}Type ELF     :{C.END} {types.get(e_type, e_type)}")
 
-    # pyelftools si dispo
     if HAS_ELFTOOLS:
         try:
             with open(path, "rb") as f:
@@ -205,19 +243,18 @@ def analyze_elf(data, path):
                 print(f"{C.Y}Machine      :{C.END} {elf.get_machine_arch()}")
                 print(f"{C.Y}Entry point  :{C.END} 0x{elf.header.e_entry:x}")
                 print(f"{C.Y}Nb sections  :{C.END} {elf.num_sections()}")
-                # Sections non standard
                 custom = []
                 for sec in elf.iter_sections():
                     name = sec.name
-                    if name and name not in (".text",".data",".bss",".rodata",".comment",
-                                              ".symtab",".strtab",".shstrtab",".dynamic",
-                                              ".dynsym",".dynstr",".hash",".gnu.hash",
-                                              ".gnu.version",".gnu.version_r",".rela.dyn",
-                                              ".rela.plt",".plt",".plt.got",".init",".fini",
-                                              ".init_array",".fini_array",".eh_frame",
-                                              ".eh_frame_hdr",".got",".got.plt",".interp",
-                                              ".note.gnu.build-id",".note.ABI-tag",
-                                              ".note.gnu.property",".gnu.version_d"):
+                    if name and name not in (".text", ".data", ".bss", ".rodata", ".comment",
+                                              ".symtab", ".strtab", ".shstrtab", ".dynamic",
+                                              ".dynsym", ".dynstr", ".hash", ".gnu.hash",
+                                              ".gnu.version", ".gnu.version_r", ".rela.dyn",
+                                              ".rela.plt", ".plt", ".plt.got", ".init", ".fini",
+                                              ".init_array", ".fini_array", ".eh_frame",
+                                              ".eh_frame_hdr", ".got", ".got.plt", ".interp",
+                                              ".note.gnu.build-id", ".note.ABI-tag",
+                                              ".note.gnu.property", ".gnu.version_d"):
                         custom.append(name)
                 if custom:
                     print(f"\n{C.M}▶ Sections non standard :{C.END}")
@@ -228,7 +265,6 @@ def analyze_elf(data, path):
     else:
         print(f"{C.W}pyelftools non installé (analyse limitée){C.END}")
 
-    # Symboles dangereux
     sym_out = run_cmd(["readelf", "-s", path])
     if sym_out:
         suspicious = ["system", "execve", "popen", "strcpy", "gets",
@@ -243,8 +279,9 @@ def analyze_elf(data, path):
         if not any_danger:
             print(f"  {C.W}(aucun){C.END}")
 
+
 # ============================================================
-# MODULE 4 - Protections
+# MODULE 4 - PROTECTIONS
 # ============================================================
 def checksec(path):
     print(f"\n{C.BOLD}{C.B}═══ [4] PROTECTIONS (checksec-like) ═══{C.END}")
@@ -259,8 +296,9 @@ def checksec(path):
     print(f"{C.Y}Canary :{C.END} " + ("Oui" if "__stack_chk_fail" in sym_out else "Non"))
     print(f"{C.Y}Fortify:{C.END} " + ("Oui" if "_chk" in sym_out else "Non"))
 
+
 # ============================================================
-# MODULE 5 - Désassemblage objdump (fallback)
+# MODULE 5 - DÉSASSEMBLAGE OBJDUMP
 # ============================================================
 def disassemble(path):
     print(f"\n{C.BOLD}{C.B}═══ [5] DÉSASSEMBLAGE (objdump) ═══{C.END}")
@@ -276,6 +314,7 @@ def disassemble(path):
     for c in calls[:15]:
         print(f"  {C.C}{c.strip()[:100]}{C.END}")
 
+
 # ============================================================
 # MODULE 6 - IOCs
 # ============================================================
@@ -283,24 +322,24 @@ def extract_iocs(data):
     print(f"\n{C.BOLD}{C.B}═══ [6] IOCs ═══{C.END}")
     txt = data.decode("latin-1", errors="ignore")
     patterns = {
-        "Emails":     r"[\w.+-]+@[\w-]+\.[\w.-]+",
-        "IPv4":       r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
-        "URLs":       r"https?://[^\s\"'<>]+",
-        "Registry":   r"HKEY_[A-Z_]+\\[^\s\"']+",
-        "Chemins Win":r"[A-Z]:\\[^\s\"'<>]+",
+        "Emails":      r"[\w.+-]+@[\w-]+\.[\w.-]+",
+        "IPv4":        r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+        "URLs":        r"https?://[^\s\"'<>]+",
+        "Registry":    r"HKEY_[A-Z_]+\\[^\s\"']+",
+        "Chemins Win": r"[A-Z]:\\[^\s\"'<>]+",
     }
     for name, pat in patterns.items():
         found = set(re.findall(pat, txt))
-        # Filtrer les faux positifs GLIBC
-        found = {f for f in found if not f.endswith((".so",".so.6")) and
+        found = {f for f in found if not f.endswith((".so", ".so.6")) and
                  "@GLIBC" not in f and len(f) < 200}
         if found:
             print(f"\n{C.M}▶ {name} ({len(found)}) :{C.END}")
             for f in list(found)[:10]:
                 print(f"  {C.C}{f}{C.END}")
 
+
 # ============================================================
-# MODULE 7 - Patterns regex
+# MODULE 7 - RECHERCHE REGEX
 # ============================================================
 def search_patterns(data, patterns):
     print(f"\n{C.BOLD}{C.B}═══ [7] RECHERCHE REGEX ═══{C.END}")
@@ -318,8 +357,9 @@ def search_patterns(data, patterns):
         else:
             print(f"{C.W}✗ '{p}' → aucun match{C.END}")
 
+
 # ============================================================
-# MODULE 8 - Offsets
+# MODULE 8 - OFFSETS
 # ============================================================
 def find_pattern_offset(data, pattern):
     print(f"\n{C.BOLD}{C.B}═══ [8] OFFSETS de '{pattern}' ═══{C.END}")
@@ -327,7 +367,8 @@ def find_pattern_offset(data, pattern):
     offsets, start = [], 0
     while True:
         i = data.find(needle, start)
-        if i == -1: break
+        if i == -1:
+            break
         offsets.append(i)
         start = i + 1
     if offsets:
@@ -336,8 +377,9 @@ def find_pattern_offset(data, pattern):
     else:
         print(f"{C.W}Aucun offset trouvé.{C.END}")
 
+
 # ============================================================
-# MODULE 9 - Hexdump
+# MODULE 9 - HEXDUMP
 # ============================================================
 def hexdump_region(data, offset, length=256):
     print(f"\n{C.BOLD}{C.B}═══ [9] HEXDUMP @ 0x{offset:x} ═══{C.END}")
@@ -348,17 +390,17 @@ def hexdump_region(data, offset, length=256):
         asci = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
         print(f"  {C.Y}{offset+i:08x}{C.END}  {C.C}{hexs:<48}{C.END}  {C.W}{asci}{C.END}")
 
+
 # ============================================================
-# MODULE 10 - Constantes 32-bit intéressantes
+# MODULE 10 - CONSTANTES 32-BIT
 # ============================================================
 def find_constants(data):
     print(f"\n{C.BOLD}{C.B}═══ [10] CONSTANTES 32-BIT ═══{C.END}")
-
-    # Signatures connues
     KNOWN = {
         0x811c9dc5: "FNV-1a offset basis",
         0x01000193: "FNV-1a prime",
-        0xedb88320: "CRC32 (IEEE) polynomial",
+        0xedb88320: "CRC32 (IEEE)",
+        0x82f63b78: "CRC32 Castagnoli",
         0x67452301: "MD5 init A",
         0xefcdab89: "MD5 init B",
         0x98badcfe: "MD5 init C",
@@ -367,7 +409,7 @@ def find_constants(data):
         0x6ed9eba1: "SHA1 K1",
         0x428a2f98: "SHA256 K0",
         0x71374491: "SHA256 K1",
-        0xcafebabe: "Java class / magic",
+        0xcafebabe: "Java class magic",
         0xdeadbeef: "Magic marker",
         0x13371337: "Magic marker (leet)",
         0xbaadf00d: "Magic marker",
@@ -376,7 +418,6 @@ def find_constants(data):
         0xdeadc0de: "Magic marker",
         0xabad1dea: "Magic marker",
     }
-
     print(f"\n{C.M}▶ Signatures connues :{C.END}")
     found_any = False
     for magic, name in KNOWN.items():
@@ -385,7 +426,8 @@ def find_constants(data):
         offsets = []
         while True:
             i = data.find(needle, idx)
-            if i == -1: break
+            if i == -1:
+                break
             offsets.append(i)
             idx = i + 1
         if offsets:
@@ -396,118 +438,61 @@ def find_constants(data):
     if not found_any:
         print(f"  {C.W}(aucune signature connue){C.END}")
 
-    # Constantes "suspectes" (entre 0x1000 et 0xffffffff, hors adresses)
-    print(f"\n{C.M}▶ Autres constantes 32-bit (échantillon) :{C.END}")
-    consts = []
-    for i in range(0, len(data) - 4, 4):
-        v = struct.unpack_from("<I", data, i)[0]
-        # Filtrer : ni trop petit, ni adresse ELF, ni caractères ASCII
-        if 0x1000 <= v <= 0xffffffff:
-            if 0x400000 <= v <= 0x500000:  # adresses ELF typiques
-                continue
-            # Filtrer les valeurs qui sont 4 chars ASCII
-            bs = struct.pack("<I", v)
-            if all(32 <= b < 127 for b in bs):
-                continue
-            consts.append((i, v))
-
-    # Dédupliquer
-    seen = set()
-    for off, v in consts[:30]:
-        if v in seen: continue
-        seen.add(v)
-        print(f"  {C.Y}0x{off:08x}{C.END}  →  {C.C}0x{v:08x}{C.END}")
 
 # ============================================================
-# MODULE 11 - Détection d'algorithmes
+# MODULE 11 - DÉTECTION D'ALGORITHMES
 # ============================================================
 def detect_algorithms(data):
     print(f"\n{C.BOLD}{C.B}═══ [11] DÉTECTION D'ALGORITHMES ═══{C.END}")
-
-    # Signatures par constantes
     sigs = {
-        "FNV-1a 32-bit":   [0x811c9dc5, 0x01000193],
-        "FNV-1 32-bit":    [0x811c9dc5, 0x01000193],
-        "CRC32 IEEE":      [0xedb88320],
+        "FNV-1a 32-bit":  [0x811c9dc5, 0x01000193],
+        "CRC32 IEEE":     [0xedb88320],
         "CRC32 Castagnoli":[0x82f63b78],
-        "MD5":             [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
-        "SHA1":            [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0],
-        "SHA256":          [0x428a2f98, 0x71374491, 0xb5c0fbcf],
-        "SHA512":          [0x428a2f98, 0xd728ae22],
-        "AES S-box":       [0x7b777c63],  # début S-box
-        "Base64 alphabet": [0x41424344],  # "ABCD"
-        "Blowfish":        [0x243f6a88, 0x85a308d3],
-        "Arcfour (RC4)":   [0xff],        # masque 0xff récurrent
+        "MD5":            [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
+        "SHA1":           [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0],
+        "SHA256":         [0x428a2f98, 0x71374491, 0xb5c0fbcf],
+        "AES S-box":      [0x7b777c63],
+        "Blowfish":       [0x243f6a88, 0x85a308d3],
     }
-
     found = []
     for name, consts in sigs.items():
         matches = 0
         for c in consts:
-            # Chercher en little-endian
-            needle = struct.pack("<I", c) if c > 0xff else bytes([c])
+            needle = struct.pack("<I", c)
             if needle in data:
                 matches += 1
-        if matches >= len(consts) * 0.6:  # au moins 60% des constantes
+        if matches >= len(consts) * 0.6:
             found.append((name, matches, len(consts)))
-
     if found:
         for name, m, total in found:
             print(f"  {C.G}✓ {name}{C.END} ({m}/{total} signatures)")
     else:
-        print(f"  {C.W}(aucun algorithme connu détecté par constantes){C.END}")
-
-    # Détection RC4 par boucle caractéristique
-    print(f"\n{C.M}▶ Heuristiques :{C.END}")
-    # RC4 : beaucoup de 0xff et 0x100 dans le code
-    count_ff   = data.count(b"\xff\x00\x00\x00")
-    count_100  = data.count(b"\x00\x01\x00\x00")
-    if count_ff > 2 or count_100 > 0:
+        print(f"  {C.W}(aucun algorithme connu détecté){C.END}")
+    if data.count(b"\xff\x00\x00\x00") > 2:
         print(f"  {C.Y}⚠{C.END} Masque 0xff fréquent → RC4/XOR loop probable")
 
-    # XOR loop : recherche de 0x30/0x31/0x32 (xor opcodes)
-    if b"\x30" in data[:0x10000] or b"\x31" in data[:0x10000]:
-        pass  # trop commun, on skip
 
 # ============================================================
-# MODULE 12 - Capstone (désassemblage propre)
+# MODULE 12 - CAPSTONE
 # ============================================================
 def capstone_disasm(path, offset=None, length=2000, max_insns=60):
     if not HAS_CAPSTONE:
         print(f"\n{C.W}[12] Capstone non installé (pip install capstone){C.END}")
         return
-
     print(f"\n{C.BOLD}{C.B}═══ [12] CAPSTONE DÉSASSEMBLAGE ═══{C.END}")
-
     data = read_bytes(path)
-
-    # Détecter l'architecture
     if data.startswith(b"\x7fELF"):
         ei_class = data[4]
         mode = CS_MODE_64 if ei_class == 2 else CS_MODE_32
-        # Vérifier l'endianness
-        if data[5] == 2:  # big endian
-            mode |= 0x4000000  # CS_MODE_BIG_ENDIAN
         md = Cs(CS_ARCH_X86, mode)
     else:
         md = Cs(CS_ARCH_X86, CS_MODE_64)
-
-    # Trouver le point de départ : entry point ou offset donné
     if offset is None:
-        if data.startswith(b"\x7fELF") and len(data) > 0x20:
-            # Entry point dans le header ELF
-            e_entry = struct.unpack_from("<Q", data, 0x18)[0]
-            offset = 0x1000  # fallback : début du .text typique
-            print(f"{C.Y}Entry point :{C.END} 0x{e_entry:x}")
-            print(f"{C.Y}Désassemblage à partir de :{C.END} 0x{offset:x}\n")
-        else:
-            offset = 0
-            print(f"{C.Y}Désassemblage à partir de :{C.END} 0x0\n")
-
+        offset = 0x1000
+    print(f"{C.Y}Désassemblage à partir de :{C.END} 0x{offset:x}\n")
     chunk = data[offset:offset+length]
     count = 0
     for insn in md.disasm(chunk, offset):
-        # Colorer selon le type
         if insn.mnemonic == "call":
             color = C.G
         elif insn.mnemonic.startswith("j"):
@@ -516,7 +501,6 @@ def capstone_disasm(path, offset=None, length=2000, max_insns=60):
             color = C.R
         else:
             color = C.W
-
         print(f"  {C.C}0x{insn.address:08x}{C.END}  "
               f"{color}{insn.mnemonic:<8}{C.END} {insn.op_str}")
         count += 1
@@ -524,137 +508,366 @@ def capstone_disasm(path, offset=None, length=2000, max_insns=60):
             print(f"  {C.W}...{C.END}")
             break
 
+
 # ============================================================
-# MODULE 13 - radare2
+# MODULE 13 - RADARE2
 # ============================================================
 def r2_analyze(path):
     if not HAS_R2PIPE:
-        print(f"\n{C.W}[13] radare2 non disponible (pip install r2pipe + apt install radare2){C.END}")
+        print(f"\n{C.W}[13] radare2 non disponible{C.END}")
+        print(f"{C.W}    Installation : pip install --user --break-system-packages r2pipe{C.END}")
         return
-
     print(f"\n{C.BOLD}{C.B}═══ [13] ANALYSE RADARE2 ═══{C.END}")
-
     try:
         r2 = r2pipe.open(path)
-        r2.cmd("aaa")  # analyse complète
+        r2.cmd("e scr.color=0")
+        r2.cmd("e bin.relocs.apply=true")
+        r2.cmd("aaa")
 
-        # Fonctions
-        print(f"\n{C.M}▶ Fonctions détectées :{C.END}")
+        # --- Fonctions détectées ---
         funcs = r2.cmdj("aflj") or []
+        print(f"\n{C.M}▶ Fonctions détectées ({len(funcs)}) :{C.END}")
         for f in funcs[:25]:
             name = f.get("name", "?")
-            addr = f.get("offset", 0)
+            addr = f.get("offset") or f.get("vaddr") or f.get("addr") or 0
             size = f.get("size", 0)
-            color = C.G if name not in ("entry0", "main") else C.Y
-            print(f"  {C.C}0x{addr:08x}{C.END}  {color}{name}{C.END}  "
-                  f"({size} octets)")
+            color = C.G if name == "main" else (C.Y if name.startswith("sym.imp") else C.C)
+            print(f"  {C.C}0x{addr:08x}{C.END}  {color}{name}{C.END}  ({size} octets)")
 
-        # Xrefs vers puts/printf (chercher où le flag est affiché)
-        print(f"\n{C.M}▶ Appels à printf/puts :{C.END}")
-        xrefs = r2.cmd("axt @@ sym.imp.printf sym.imp.puts").splitlines()
-        for x in xrefs[:15]:
-            print(f"  {C.C}{x}{C.END}")
-
-        # Strings avec offsets (mieux que regex)
-        print(f"\n{C.M}▶ Strings (r2, filtrées) :{C.END}")
+        # --- Strings intéressantes ---
         strings = r2.cmdj("izj") or []
-        interesting = [s for s in strings if any(
-            k in s.get("string", "").lower()
-            for k in ["flag", "rek", "ctf", "pass", "key", "rc4"]
-        )]
-        for s in interesting[:15]:
-            print(f"  {C.C}0x{s.get('vaddr',0):x}{C.END}  "
-                  f"{C.W}{s.get('string','')[:80]}{C.END}")
+        interesting = []
+        for s in strings:
+            txt = s.get("string", "")
+            if any(k in txt.lower() for k in ["flag", "eth", "ctf", "pass", "key", "rek"]):
+                vaddr = s.get("vaddr") or s.get("paddr") or 0
+                interesting.append((vaddr, txt))
+        if interesting:
+            print(f"\n{C.M}▶ Strings intéressantes ({len(interesting)}) :{C.END}")
+            for vaddr, txt in interesting[:15]:
+                print(f"  {C.C}0x{vaddr:x}{C.END}  {C.W}{txt[:80]}{C.END}")
 
-        # Désassemblage d'une fonction clé
-        if funcs:
-            # Chercher main ou une fonction contenant "rc4"
-            target = None
-            for f in funcs:
-                if "rc4" in f.get("name", "").lower() or f.get("name") == "main":
-                    target = f
-                    break
-            if target:
-                print(f"\n{C.M}▶ Désassemblage de {target['name']} "
-                      f"({target['size']} octets) :{C.END}")
-                disasm = r2.cmd(f"pdf @ {target['offset']}")
-                for line in disasm.splitlines()[:40]:
-                    print(f"  {C.C}{line}{C.END}")
+        # --- Xrefs vers puts/printf ---
+        print(f"\n{C.M}▶ Xrefs vers puts/printf :{C.END}")
+        xrefs_out = r2.cmd("axt @@ sym.imp.puts sym.imp.printf")
+        for line in xrefs_out.splitlines()[:10]:
+            if line.strip():
+                print(f"  {C.C}{line.strip()}{C.END}")
+
+        # --- Désassemblage de main ---
+        for f in funcs:
+            if f.get("name") == "main":
+                addr = f.get("offset") or f.get("vaddr") or f.get("addr") or 0
+                print(f"\n{C.M}▶ Désassemblage de main (0x{addr:x}) :{C.END}")
+                disasm = r2.cmd(f"pdf @ {addr}")
+                for line in disasm.splitlines()[:35]:
+                    if "call" in line:
+                        color = C.G
+                    elif any(j in line for j in ["jmp ", "jne ", "je ", "jz ", "jnz ", "jg ", "jl "]):
+                        color = C.Y
+                    elif "ret" in line or "leave" in line:
+                        color = C.R
+                    else:
+                        color = C.C
+                    print(f"  {color}{line}{C.END}")
+                break
 
         r2.quit()
     except Exception as e:
         print(f"{C.R}Erreur radare2 : {e}{C.END}")
 
+
 # ============================================================
-# MODULE 14 - Ghidra headless (optionnel)
+# MODULE 14 - GHIDRA HEADLESS
 # ============================================================
 def ghidra_decompile(path, output_file=None):
     if not HAS_GHIDRA:
-        print(f"\n{C.W}[14] Ghidra non installé (analyzeHeadless introuvable){C.END}")
-        print(f"{C.W}    Téléchargez Ghidra : https://ghidra-sre.org/{C.END}")
+        print(f"\n{C.W}[14] Ghidra non installé{C.END}")
+        print(f"{C.W}    Téléchargez : https://ghidra-sre.org/{C.END}")
         print(f"{C.W}    Puis : export PATH=$PATH:/opt/ghidra/support{C.END}")
         return
-
     print(f"\n{C.BOLD}{C.B}═══ [14] GHIDRA HEADLESS ═══{C.END}")
-
     import tempfile
     proj_dir = tempfile.mkdtemp(prefix="rekit_ghidra_")
     proj_name = "rekit_proj"
-
-    # Script Ghidra minimal pour décompiler toutes les fonctions
     ghidra_script = """
 # @category REKit
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
-
 decomp = DecompInterface()
 decomp.openProgram(currentProgram)
-
 fm = currentProgram.getFunctionManager()
 for func in fm.getFunctions(True):
     if func.isThunk(): continue
-    print("=== " + func.getName() + " @ " + str(func.getEntryPoint()) + " ===")
+    print("=== " + func.getName() + " ===")
     res = decomp.decompileFunction(func, 30, ConsoleTaskMonitor())
     if res.decompileCompleted():
         print(res.getDecompiledFunction().getC())
-    print("")
 """
     script_path = os.path.join(proj_dir, "decompile.py")
     with open(script_path, "w") as f:
         f.write(ghidra_script)
-
-    cmd = [
-        "analyzeHeadless", proj_dir, proj_name,
-        "-import", path,
-        "-postScript", "decompile.py",
-        "-scriptPath", proj_dir,
-        "-deleteProject",
-    ]
+    cmd = ["analyzeHeadless", proj_dir, proj_name, "-import", path,
+           "-postScript", "decompile.py", "-scriptPath", proj_dir, "-deleteProject"]
     print(f"{C.Y}Lancement de Ghidra (peut prendre 30s)...{C.END}")
     out = run_cmd(cmd, timeout=300)
     if out:
-        # Extraire le pseudo-C
-                if output_file is None:
+        if output_file is None:
             output_file = path + ".decompiled.c"
-
-        lines = out.splitlines()
-        c_lines = []
-        capture = False
-        for line in lines:
-            if line.startswith("=== ") and line.endswith(" ==="):
-                capture = True
-                c_lines.append("\n/* " + line + " */")
-            elif capture and not line.startswith(("INFO ", "WARN ", "ERROR ", "Using ")):
-                c_lines.append(line)
-
-        pseudo_c = "\n".join(c_lines)
         with open(output_file, "w") as f:
-            f.write(pseudo_c)
+            f.write(out)
+        print(f"{C.G}✓ Décompilation : {output_file}{C.END}")
 
-        print(f"{C.G}✓ Décompilation terminée : {output_file}{C.END}")
-        print(f"{C.Y}Extrait :{C.END}")
-        for line in c_lines[:40]:
-            print(f"  {C.C}{line}{C.END}")
-          
+
+# ============================================================
+# MODULE 15 - DÉTECTION DE PACKER
+# ============================================================
+def detect_packer(data, path):
+    print(f"\n{C.BOLD}{C.B}═══ [15] DÉTECTION PACKER ═══{C.END}")
+    signatures = {
+        b"UPX!": "UPX", b"UPX0": "UPX", b"UPX1": "UPX",
+        b"MPRESS1": "MPRESS", b"MPRESS2": "MPRESS",
+        b".aspack": "ASPack", b".adata": "ASPack",
+        b".pec": "PECompact", b"FSG!": "FSG",
+        b".Themida": "Themida", b"VMProtect": "VMProtect",
+        b".vmp0": "VMProtect", b".vmp1": "VMProtect",
+        b".enigma1": "Enigma", b".enigma2": "Enigma",
+    }
+    detected = None
+    for sig, name in signatures.items():
+        if sig in data:
+            print(f"  {C.G}✓ Signature : {name}{C.END}")
+            detected = name
+    if data.startswith(b"\x7fELF"):
+        out = run_cmd(["readelf", "-S", "-W", path])
+        if out:
+            print(f"\n{C.M}▶ Entropie par section :{C.END}")
+            for line in out.splitlines():
+                m = re.search(r"\[\s*\d+\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)", line)
+                if m:
+                    name = m.group(1)
+                    offset = int(m.group(2), 16)
+                    size = int(m.group(3), 16)
+                    if size > 100 and offset + size <= len(data):
+                        ent = entropy(data[offset:offset+size])
+                        color = C.R if ent > 7.2 else (C.Y if ent > 6 else C.G)
+                        print(f"  {C.C}{name:<20}{C.END} taille={size:<8} entropie={color}{ent:.3f}{C.END}")
+    if not detected and entropy(data) > 7.2:
+        print(f"\n  {C.Y}⚠ Entropie > 7.2 sans signature connue{C.END}")
+    return detected
+
+
+# ============================================================
+# MODULE 16 - UNPACKING
+# ============================================================
+def auto_unpack(path):
+    print(f"\n{C.BOLD}{C.B}═══ [16] UNPACKING AUTOMATIQUE ═══{C.END}")
+    data = read_bytes(path)
+    unpacked_path = path + ".unpacked"
+    if b"UPX!" in data:
+        print(f"{C.Y}[1/3] UPX détecté{C.END}")
+        if shutil.which("upx"):
+            shutil.copy(path, unpacked_path)
+            out = run_cmd(["upx", "-d", unpacked_path])
+            if out and "Unpacked" in out:
+                print(f"  {C.G}✓ Unpacked : {unpacked_path}{C.END}")
+                return unpacked_path
+            else:
+                print(f"  {C.R}✗ Échec UPX{C.END}")
+        else:
+            print(f"  {C.W}upx non installé : sudo apt install upx-ucl{C.END}")
+            return None
+    print(f"{C.W}Pas de signature UPX détectée{C.END}")
+    return None
+
+
+# ============================================================
+# MODULE 17 - ANALYSE DE PATCH
+# ============================================================
+def patch_analysis(data, path):
+    print(f"\n{C.BOLD}{C.B}═══ [17] ANALYSE DE PATCH ═══{C.END}")
+    if not HAS_CAPSTONE:
+        print(f"{C.W}Capstone non installé{C.END}")
+        jne_count = data.count(b"\x75")
+        je_count = data.count(b"\x74")
+        print(f"  {C.Y}jne (0x75) :{C.END} {jne_count} occurrences")
+        print(f"  {C.Y}je  (0x74) :{C.END} {je_count} occurrences")
+        return
+    from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+    md = Cs(CS_ARCH_X86, CS_MODE_64)
+    text_start = 0x1000
+    text_size = min(0x10000, len(data) - text_start)
+    print(f"\n{C.M}▶ Sauts conditionnels :{C.END}")
+    interesting = []
+    for insn in md.disasm(data[text_start:text_start+text_size], text_start):
+        if insn.mnemonic in ("cmp", "test", "jne", "je", "jz", "jnz", "call"):
+            interesting.append((insn.address, insn.mnemonic, insn.op_str, insn.bytes))
+    for addr, mnem, ops, raw in interesting[:30]:
+        bytes_str = " ".join(f"{b:02x}" for b in raw)
+        print(f"  {C.C}0x{addr:08x}{C.END}  {C.Y}{mnem:<6}{C.END} {ops:<25}  [{bytes_str}]")
+
+
+# ============================================================
+# MODULE 18 - APPLICATION DE PATCH
+# ============================================================
+def apply_patch(path, patches):
+    print(f"\n{C.BOLD}{C.B}═══ [18] APPLICATION DE PATCH ═══{C.END}")
+    backup = path + ".bak"
+    if not os.path.exists(backup):
+        shutil.copy(path, backup)
+        print(f"{C.Y}Backup :{C.END} {backup}")
+    with open(path, "r+b") as f:
+        for offset, new_bytes in patches:
+            f.seek(offset)
+            old = f.read(len(new_bytes))
+            f.seek(offset)
+            f.write(new_bytes)
+            print(f"  {C.C}0x{offset:08x}{C.END}  {C.R}{old.hex()}{C.END} → {C.G}{new_bytes.hex()}{C.END}")
+    print(f"\n{C.G}✓ {len(patches)} patch(s) appliqué(s){C.END}")
+
+
+# ============================================================
+# MODULE 19 - NOP-OUT
+# ============================================================
+def nop_out(path, offset, length):
+    print(f"\n{C.BOLD}{C.B}═══ [19] NOP-OUT ═══{C.END}")
+    apply_patch(path, [(offset, b'\x90' * length)])
+
+
+# ============================================================
+# MODULE 20 - INVERSION DE SAUT
+# ============================================================
+def invert_jump(path, offset):
+    print(f"\n{C.BOLD}{C.B}═══ [20] INVERSION DE SAUT ═══{C.END}")
+    with open(path, "rb") as f:
+        f.seek(offset)
+        opcode = f.read(1)[0]
+    INVERSES = {0x74:0x75, 0x75:0x74, 0x7c:0x7d, 0x7d:0x7c, 0x7e:0x7f, 0x7f:0x7e}
+    NAMES = {0x74:"je",0x75:"jne",0x7c:"jl",0x7d:"jge",0x7e:"jle",0x7f:"jg"}
+    if opcode in INVERSES:
+        new_op = INVERSES[opcode]
+        print(f"  {C.Y}{NAMES[opcode]}{C.END} → {C.G}{NAMES[new_op]}{C.END}")
+        apply_patch(path, [(offset, bytes([new_op]))])
+    else:
+        print(f"  {C.R}Opcode 0x{opcode:02x} non reconnu{C.END}")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+path_global = ""
+
+
+def main():
+    global path_global
+    banner()
+
+    parser = argparse.ArgumentParser(
+        description="REKit v2.1 - Reverse Engineering Toolkit",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("fichier", help="Fichier à analyser")
+    parser.add_argument("-a", "--all", action="store_true", help="Analyse complète")
+    parser.add_argument("-i", "--info", action="store_true", help="Infos fichier")
+    parser.add_argument("-s", "--strings", action="store_true", help="Chaînes")
+    parser.add_argument("-e", "--elf", action="store_true", help="Analyse ELF")
+    parser.add_argument("-p", "--protections", action="store_true", help="checksec")
+    parser.add_argument("-d", "--disasm", action="store_true", help="Désassemblage objdump")
+    parser.add_argument("-io", "--iocs", action="store_true", help="Extraction IOCs")
+    parser.add_argument("-r", "--regex", nargs="+", help="Patterns regex")
+    parser.add_argument("-o", "--offset", help="Offset d'une chaîne")
+    parser.add_argument("-x", "--hexdump", type=lambda x: int(x, 0), help="Hexdump")
+    parser.add_argument("-l", "--len", type=int, default=256, help="Longueur hexdump")
+    parser.add_argument("-c", "--constants", action="store_true",
+                        help="Constantes 32-bit (module 10)")
+    parser.add_argument("-algo", "--algorithms", action="store_true",
+                        help="Détection d'algorithmes (module 11)")
+    parser.add_argument("-cap", "--capstone", action="store_true",
+                        help="Désassemblage Capstone (module 12)")
+    parser.add_argument("-r2", "--radare2", action="store_true",
+                        help="Analyse radare2 (module 13)")
+    parser.add_argument("-gh", "--ghidra", action="store_true",
+                        help="Décompilation Ghidra (module 14)")
+    parser.add_argument("-packer", "--packer", action="store_true",
+                        help="Détection de packer (module 15)")
+    parser.add_argument("-unpack", "--unpack", action="store_true",
+                        help="Unpacking automatique (module 16)")
+    parser.add_argument("-patch", "--patch-analysis", action="store_true",
+                        help="Analyse des patchs possibles (module 17)")
+    parser.add_argument("--patch-bytes", nargs=2, metavar=("OFFSET", "HEX"),
+                        help="Patch : offset et bytes en hex (ex: 0x1234 74)")
+    parser.add_argument("--nop", nargs=2, metavar=("OFFSET", "LEN"),
+                        help="NOP-out : offset et longueur")
+    parser.add_argument("--invert-jump", metavar="OFFSET",
+                        help="Inverser un saut à un offset")
+
+    args = parser.parse_args()
+    path_global = args.fichier
+
+    if not os.path.isfile(path_global):
+        print(f"{C.R}[!] Fichier introuvable : {path_global}{C.END}")
+        sys.exit(1)
+
+    data = read_bytes(path_global)
+
+    if not any([args.info, args.strings, args.elf, args.protections,
+                args.disasm, args.iocs, args.regex, args.offset, args.hexdump,
+                args.constants, args.algorithms, args.capstone, args.radare2,
+                args.ghidra, args.packer, args.unpack, args.patch_analysis,
+                args.patch_bytes, args.nop, args.invert_jump]):
+        args.all = True
+
+    if args.all or args.info:
+        file_info(path_global)
+    if args.all or args.strings:
+        extract_strings(data)
+    if args.all or args.elf:
+        analyze_elf(data, path_global)
+    if args.all or args.protections:
+        checksec(path_global)
+    if args.all or args.disasm:
+        disassemble(path_global)
+    if args.all or args.iocs:
+        extract_iocs(data)
+    if args.regex:
+        search_patterns(data, args.regex)
+    if args.offset:
+        find_pattern_offset(data, args.offset)
+    if args.hexdump is not None:
+        hexdump_region(data, args.hexdump, args.len)
+
+    if args.all or args.constants:
+        find_constants(data)
+    if args.all or args.algorithms:
+        detect_algorithms(data)
+    if args.capstone:
+        capstone_disasm(path_global)
+    if args.radare2:
+        r2_analyze(path_global)
+    if args.ghidra:
+        ghidra_decompile(path_global)
+
+    if args.all or args.packer:
+        detect_packer(data, path_global)
+    if args.unpack:
+        auto_unpack(path_global)
+    if args.all or args.patch_analysis:
+        patch_analysis(data, path_global)
+
+    if args.patch_bytes:
+        offset = int(args.patch_bytes[0], 0)
+        hex_bytes = bytes.fromhex(args.patch_bytes[1])
+        apply_patch(path_global, [(offset, hex_bytes)])
+    if args.nop:
+        offset = int(args.nop[0], 0)
+        length = int(args.nop[1])
+        nop_out(path_global, offset, length)
+    if args.invert_jump:
+        offset = int(args.invert_jump, 0)
+        invert_jump(path_global, offset)
+
+    print(f"\n{C.G}{C.BOLD}[✓] Analyse terminée.{C.END}\n")
+
+
 if __name__ == "__main__":
     main()
